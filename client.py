@@ -31,6 +31,11 @@ class SupabaseAdminClient:
         r.raise_for_status()
         return r.json()
 
+    async def storage_get(self, path: str, params: dict | None = None) -> list[dict]:
+        r = await self._http.get(f"{self.base}/storage/v1/{path.lstrip('/')}", params=params)
+        r.raise_for_status()
+        return r.json()
+
     async def get_one(self, path: str, params: dict | None = None) -> dict | None:
         r = await self._http.get(f"{self.rest}/{path.lstrip('/')}", params={**(params or {}), "limit": 1})
         r.raise_for_status()

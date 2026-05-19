@@ -46,7 +46,10 @@ async def supabase_list_extensions() -> list:
 
 @app.tool(description="List applied migrations from supabase_migrations.schema_migrations")
 async def supabase_list_migrations() -> list:
-    return await client.sql("SELECT * FROM supabase_migrations.schema_migrations ORDER BY version")
+    try:
+        return await client.sql("SELECT * FROM supabase_migrations.schema_migrations ORDER BY version")
+    except Exception:
+        return [{"note": "supabase_migrations.schema_migrations table not found. Run Supabase CLI migrations first."}]
 
 
 @app.tool(description="List columns for a specific table.")
@@ -141,9 +144,9 @@ async def supabase_get_stats() -> list:
 
 @app.tool(description="Get index usage statistics.")
 async def supabase_get_index_stats(index_name: str = "", schema: str = "public") -> list:
-    q = f"SELECT schemaname, tablename, indexname, idx_scan, idx_tup_read, idx_tup_fetch FROM pg_stat_user_indexes WHERE schemaname = '{schema}'"
+    q = f"SELECT schemaname, relname AS tablename, indexrelname AS indexname, idx_scan, idx_tup_read, idx_tup_fetch FROM pg_stat_user_indexes WHERE schemaname = '{schema}'"
     if index_name:
-        q += f" AND indexname = '{index_name}'"
+        q += f" AND indexrelname = '{index_name}'"
     return await client.sql(q)
 
 
@@ -210,25 +213,24 @@ async def supabase_check_pgcrypto() -> dict:
 
 @app.tool(description="List storage buckets.")
 async def supabase_list_storage_buckets() -> list:
-    return await client.get("/bucket")
+    return await client.storage_get("bucket")
 
 
 @app.tool(description="List objects in a storage bucket.")
 async def supabase_list_storage_objects(bucket: str, prefix: str = "", limit: int = 100) -> list:
-    return await client.get(f"/object/list/{bucket}", params={"prefix": prefix, "limit": limit})
+    return await client.storage_get(f"object/list/{bucket}", params={"prefix": prefix, "limit": limit})
 
 
 @app.tool(description="Get storage bucket configuration.")
 async def supabase_get_storage_config(bucket_id: str = "") -> list | dict:
     if bucket_id:
-        r = await client.get(f"/bucket/{bucket_id}")
-        return r[0] if r else {}
-    return await client.get("/bucket")
+        return await client.storage_get(f"bucket/{bucket_id}")
+    return await client.storage_get("bucket")
 
 
 @app.tool(description="Get metadata for a storage object.")
 async def supabase_get_storage_object_metadata(bucket: str, path: str) -> dict | None:
-    r = await client.get(f"/object/info/{bucket}/{path}")
+    r = await client.storage_get(f"object/info/{bucket}/{path}")
     return r[0] if r else None
 
 
