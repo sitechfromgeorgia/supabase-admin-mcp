@@ -1,6 +1,6 @@
 [project]
 name = "supabase-admin-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server for self-hosted Supabase — 47 tools, REST API only, no DATABASE_URL"
 readme = "README.md"
 license = { text = "MIT" }

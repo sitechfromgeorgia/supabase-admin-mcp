@@ -39,7 +39,8 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_tem
 - `SECURITY DEFINER` means it runs as the function owner (bypasses RLS)
 - `SET search_path = public, pg_temp` prevents search-path attacks
 - `read_only = true` (the default) is enforced at the database level: the query runs inside a read-only transaction, so writes fail with SQLSTATE 25006. Writes require an explicit `read_only = false`
-- `EXPLAIN ... (FORMAT JSON)` is special-cased: it cannot be wrapped as a subquery, so it executes directly
+- `EXPLAIN` is a utility statement: PL/pgSQL cannot capture its output — the MCP explain tool runs it through the Studio postgres-meta endpoint (`/pg/query`) instead
+- Non-subqueryable statements (DDL/DML/utility) are detected via a syntax-error fallback and execute directly, returning `{"status": "ok", "row_count": N}` instead of rows
 
 ### PostgreSQL Query Patterns
 

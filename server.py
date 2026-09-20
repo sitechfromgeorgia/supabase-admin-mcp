@@ -149,10 +149,16 @@ async def supabase_execute_sql(query: str, read_only: bool = True) -> list:
     return await client.sql(query, read_only=read_only)
 
 
-@app.tool(description="Get the query plan as JSON. WARNING: analyze=true actually executes the statement. Runs with read_only=true, so write statements cannot be EXPLAIN ANALYZEd.")
+@app.tool(description="Get the query plan as JSON. analyze=true actually EXECUTES the statement (wrapped in a read-only transaction, so write statements are rejected). Uses the Studio postgres-meta endpoint, because PL/pgSQL cannot capture EXPLAIN output through the execute_sql RPC.")
 async def supabase_explain_query(sql: str, analyze: bool = False) -> list:
     mode = "ANALYZE, " if analyze else ""
-    return await client.sql(f"EXPLAIN ({mode}FORMAT JSON) {sql}", read_only=True)
+    explain_sql = f"EXPLAIN ({mode}FORMAT JSON) {sql}"
+    try:
+        if analyze:
+            return await client.meta_query(f"SET TRANSACTION READ ONLY; {explain_sql};")
+        return await client.meta_query(explain_sql)
+    except Exception:
+        return await client.sql(explain_sql, read_only=True)
 
 
 @app.tool(description="Get slow queries from pg_stat_statements (requires pg_stat_statements extension).")
@@ -500,7 +506,7 @@ async def supabase_get_edge_function_details(function_slug: str) -> dict | None:
 async def supabase_get_help() -> dict:
     return {
         "name": "supabase-admin-mcp",
-        "version": "0.2.0",
+        "version": "0.2.1",
         "tools_count": 47,
         "categories": "Schema, SQL, Stats, Auth, Storage, RLS, Realtime, Extensions, Edge Functions",
         "note": "Requires execute_sql RPC in database. Run MIGRATION.sql first.",

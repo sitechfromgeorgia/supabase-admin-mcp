@@ -25,15 +25,27 @@ Run [`MIGRATION.sql`](MIGRATION.sql) **once** in your Supabase SQL editor (or vi
 ```sql
 CREATE OR REPLACE FUNCTION public.execute_sql(query text, read_only boolean DEFAULT true)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE result jsonb; explain_result json; BEGIN
+DECLARE result jsonb; explain_result json; rowcount bigint; BEGIN
   IF read_only THEN
     PERFORM set_config('transaction_read_only', 'on', true);
   END IF;
-  IF query ~* '^\s*explain\b' THEN
-    EXECUTE query INTO explain_result;
-    RETURN explain_result::jsonb;
+  -- EXPLAIN: utility statement, PL/pgSQL cannot capture it (EXECUTE ... INTO);
+  -- detection avoids regex escapes (\b is a backspace in PG, not a boundary)
+  IF left(ltrim(lower(query), ' ' || chr(9) || chr(10) || chr(13)), 7) = 'explain' THEN
+    BEGIN
+      EXECUTE query INTO explain_result;
+      RETURN explain_result::jsonb;
+    EXCEPTION WHEN others THEN
+      RAISE EXCEPTION 'EXPLAIN cannot be captured through execute_sql — use the supabase_explain_query tool or Studio (%)', SQLERRM;
+    END;
   END IF;
-  EXECUTE 'SELECT COALESCE(jsonb_agg(t), ''[]''::jsonb) FROM (' || query || ') t' INTO result;
+  BEGIN
+    EXECUTE 'SELECT COALESCE(jsonb_agg(t), ''[]''::jsonb) FROM (' || query || ') t' INTO result;
+  EXCEPTION WHEN syntax_error THEN
+    EXECUTE query;
+    GET DIAGNOSTICS rowcount = ROW_COUNT;
+    result := jsonb_build_object('status', 'ok', 'row_count', rowcount);
+  END;
   RETURN result;
 EXCEPTION
   WHEN read_only_sql_transaction THEN
@@ -48,9 +60,11 @@ GRANT EXECUTE ON FUNCTION public.execute_sql(text, boolean) TO service_role;
 NOTIFY pgrst, 'reload schema';
 ```
 
+Statement handling: `SELECT/WITH/...` rows come back as a JSON array; DDL/DML (`CREATE`, `ALTER`, `INSERT`, …) execute directly and return `{"status": "ok", "row_count": N}`.
+
 > **Do not skip the `REVOKE ... FROM PUBLIC` line.** PostgreSQL grants EXECUTE on new functions to `PUBLIC` by default — without that revoke, anyone holding the `anon` key could run arbitrary SQL through `POST /rest/v1/rpc/execute_sql`.
 
-**Upgrading from 0.1.x?** Re-run `MIGRATION.sql`. From 0.2.0 the function actually enforces `read_only = true` (read-only transaction) and the revokes include `PUBLIC`.
+**Upgrading from an earlier version?** Re-run `MIGRATION.sql`. From 0.2.x the function enforces `read_only = true` (read-only transaction), executes DDL/DML directly, and the revokes include `PUBLIC`.
 
 ### 2. Get Your Service Key
 
@@ -125,7 +139,7 @@ mcp_servers:
 | Tool | Description |
 |------|-------------|
 | `supabase_execute_sql` | Execute SQL — `read_only=true` enforced unless explicitly `false` |
-| `supabase_explain_query` | Query plan as JSON; `analyze=true` executes the statement |
+| `supabase_explain_query` | Query plan as JSON; `analyze=true` executes the statement (read-only guarded) |
 | `supabase_get_slow_queries` | Slow queries from pg_stat_statements |
 
 ### Database Stats (9 tools)
@@ -213,6 +227,7 @@ mcp_servers:
 - **All queries via REST** — no direct DB exposure
 - **`execute_sql` restricted to `service_role` only** — the `MIGRATION.sql` revokes EXECUTE from `PUBLIC`, `anon` and `authenticated`
 - **`read_only = true` is enforced in the database** — the query runs inside a read-only transaction; writes fail with SQLSTATE 25006 unless `read_only=false` is passed explicitly
+- **`EXPLAIN`** is served through the Studio postgres-meta endpoint (PL/pgSQL cannot capture utility statements through the RPC); `analyze=true` is wrapped in a read-only transaction
 - **Pre-created RPC** — no auto-DDL on startup
 - **Values interpolated into catalog queries are escaped** (single quotes doubled)
 

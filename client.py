@@ -30,6 +30,17 @@ class SupabaseAdminClient:
         r.raise_for_status()
         return r.json()
 
+    async def meta_query(self, sql: str) -> list[dict]:
+        """Run raw SQL through the Studio postgres-meta endpoint (/pg/query).
+
+        Unlike the execute_sql RPC this executes statements as-is (no subquery
+        wrapping), which is required for utility statements like EXPLAIN. The
+        endpoint is part of standard self-hosted Supabase (Studio).
+        """
+        r = await self._http.post(f"{self.base}/pg/query", json={"query": sql})
+        r.raise_for_status()
+        return r.json()
+
     async def get(self, path: str, params: dict | None = None) -> list[dict]:
         r = await self._http.get(f"{self.rest}/{path.lstrip('/')}", params=params)
         r.raise_for_status()

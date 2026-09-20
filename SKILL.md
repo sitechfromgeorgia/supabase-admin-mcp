@@ -43,7 +43,7 @@ Since 0.2.0 the function enforces `read_only = true` (read-only transaction) and
 | Tool | Description |
 |------|-------------|
 | `supabase_execute_sql` | Arbitrary SQL — `read_only=true` enforced unless explicitly `false` |
-| `supabase_explain_query` | Query plan JSON (`analyze=true` executes) |
+| `supabase_explain_query` | Query plan JSON (`analyze=true` executes; via postgres-meta) |
 | `supabase_get_slow_queries` | Slow queries (pg_stat_statements) |
 
 ### Database Stats
