@@ -18,24 +18,39 @@ SUPABASE_SERVICE_KEY → httpx → /rest/v1/rpc/execute_sql → PostgREST → DB
 
 ## Prerequisites
 
-### 1. Create `execute_sql` RPC Function
+### 1. Create the `execute_sql` RPC Function
 
-Run this SQL **once** in Supabase Studio SQL Editor:
+Run [`MIGRATION.sql`](MIGRATION.sql) **once** in your Supabase SQL editor (or via `psql` as the database owner):
 
 ```sql
-CREATE OR REPLACE FUNCTION public.execute_sql(query text, read_only boolean DEFAULT false)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE result jsonb; BEGIN
+CREATE OR REPLACE FUNCTION public.execute_sql(query text, read_only boolean DEFAULT true)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE result jsonb; explain_result json; BEGIN
+  IF read_only THEN
+    PERFORM set_config('transaction_read_only', 'on', true);
+  END IF;
+  IF query ~* '^\s*explain\b' THEN
+    EXECUTE query INTO explain_result;
+    RETURN explain_result::jsonb;
+  END IF;
   EXECUTE 'SELECT COALESCE(jsonb_agg(t), ''[]''::jsonb) FROM (' || query || ') t' INTO result;
   RETURN result;
-EXCEPTION WHEN others THEN RAISE EXCEPTION 'Error executing SQL (SQLSTATE: %): %', SQLSTATE, SQLERRM;
+EXCEPTION
+  WHEN read_only_sql_transaction THEN
+    RAISE EXCEPTION 'read_only = true: statement rejected — the database is in read-only mode (pass read_only=false for writes)';
+  WHEN others THEN RAISE EXCEPTION 'Error executing SQL (SQLSTATE: %): %', SQLSTATE, SQLERRM;
 END; $$;
-REVOKE ALL ON FUNCTION public.execute_sql(text, boolean) FROM anon, authenticated;
+
+REVOKE ALL ON FUNCTION public.execute_sql(text, boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.execute_sql(text, boolean) FROM anon;
+REVOKE ALL ON FUNCTION public.execute_sql(text, boolean) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.execute_sql(text, boolean) TO service_role;
 NOTIFY pgrst, 'reload schema';
 ```
 
-The SQL is also in `MIGRATION.sql`.
+> **Do not skip the `REVOKE ... FROM PUBLIC` line.** PostgreSQL grants EXECUTE on new functions to `PUBLIC` by default — without that revoke, anyone holding the `anon` key could run arbitrary SQL through `POST /rest/v1/rpc/execute_sql`.
+
+**Upgrading from 0.1.x?** Re-run `MIGRATION.sql`. From 0.2.0 the function actually enforces `read_only = true` (read-only transaction) and the revokes include `PUBLIC`.
 
 ### 2. Get Your Service Key
 
@@ -48,10 +63,20 @@ You need the `service_role` key from your Supabase instance. This key bypasses R
 uv sync
 
 # Set env vars and start
-SUPABASE_SERVICE_KEY=eyJ... uv run server.py
+SUPABASE_URL=https://data.example.com SUPABASE_SERVICE_KEY=eyJ... uv run server.py
 ```
 
-### OpenCode Config
+### Verify the installation
+
+```bash
+SUPABASE_URL=... SUPABASE_SERVICE_KEY=... uv run scripts/verify_setup.py
+```
+
+Checks connectivity, that `read_only = true` really blocks writes, and that writes work with `read_only = false`. Exits 0 when the setup is correct.
+
+### MCP client config
+
+OpenCode:
 
 ```jsonc
 {
@@ -63,6 +88,18 @@ SUPABASE_SERVICE_KEY=eyJ... uv run server.py
     }
   }
 }
+```
+
+Hermes Agent (`~/.hermes/config.yaml`):
+
+```yaml
+mcp_servers:
+  supabase-admin:
+    command: /PATH/TO/supabase-admin-mcp/.venv/bin/python
+    args: ["/PATH/TO/supabase-admin-mcp/server.py"]
+    env:
+      SUPABASE_URL: "https://data.example.com"
+      SUPABASE_SERVICE_KEY: "eyJ..."
 ```
 
 ## 47 Tools
@@ -87,8 +124,8 @@ SUPABASE_SERVICE_KEY=eyJ... uv run server.py
 
 | Tool | Description |
 |------|-------------|
-| `supabase_execute_sql` | Execute arbitrary SQL (read_only default) |
-| `supabase_explain_query` | EXPLAIN ANALYZE |
+| `supabase_execute_sql` | Execute SQL — `read_only=true` enforced unless explicitly `false` |
+| `supabase_explain_query` | Query plan as JSON; `analyze=true` executes the statement |
 | `supabase_get_slow_queries` | Slow queries from pg_stat_statements |
 
 ### Database Stats (9 tools)
@@ -101,7 +138,7 @@ SUPABASE_SERVICE_KEY=eyJ... uv run server.py
 | `supabase_get_table_sizes` | Per-table disk usage |
 | `supabase_get_cache_hit_ratio` | Buffer cache hit ratio |
 | `supabase_get_locks` | Lock waits and blockers |
-| `supabase_get_deadlocks` | Deadlock info |
+| `supabase_get_deadlocks` | Deadlock/rollback counters |
 | `supabase_get_autovacuum_status` | Vacuum status |
 | `supabase_get_connection_pool_stats` | Connection pool summary |
 
@@ -130,10 +167,10 @@ SUPABASE_SERVICE_KEY=eyJ... uv run server.py
 |------|-------------|
 | `supabase_list_rls_policies` | RLS policies |
 | `supabase_get_rls_status` | RLS enabled/disabled per table |
-| `supabase_get_advisors` | Security/performance notices |
+| `supabase_get_advisors` | Built-in subset of Supabase's security/performance linters |
 | `supabase_list_publications` | Realtime publications |
-| `supabase_list_realtime_channels` | Active Realtime channels |
-| `supabase_get_realtime_config` | WAL level |
+| `supabase_list_realtime_channels` | Tables enabled for Realtime |
+| `supabase_get_realtime_config` | WAL / replication settings |
 
 ### Extensions & Edge (5 tools)
 
@@ -174,9 +211,10 @@ SUPABASE_SERVICE_KEY=eyJ... uv run server.py
 
 - **Service key required** — never share with client-side code
 - **All queries via REST** — no direct DB exposure
-- **`execute_sql` restricted** to service_role only
-- **Read-only default** — `read_only=True` prevents accidental writes
-- **Pre-created RPC** — no auto-DDL on startup (unlike the old Bun version)
+- **`execute_sql` restricted to `service_role` only** — the `MIGRATION.sql` revokes EXECUTE from `PUBLIC`, `anon` and `authenticated`
+- **`read_only = true` is enforced in the database** — the query runs inside a read-only transaction; writes fail with SQLSTATE 25006 unless `read_only=false` is passed explicitly
+- **Pre-created RPC** — no auto-DDL on startup
+- **Values interpolated into catalog queries are escaped** (single quotes doubled)
 
 ## Environment Variables
 

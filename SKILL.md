@@ -1,4 +1,4 @@
-# supabase-admin-mcp — OpenCode Skill
+# supabase-admin-mcp — Skill
 
 Self-hosted Supabase admin tools. 47 tools, all via REST API. No DATABASE_URL needed.
 
@@ -18,7 +18,9 @@ Self-hosted Supabase admin tools. 47 tools, all via REST API. No DATABASE_URL ne
 
 ## Prerequisites
 
-Run `MIGRATION.sql` in Supabase Studio SQL Editor **once** to create the `execute_sql` RPC function. Without it, all tools return error.
+Run `MIGRATION.sql` in Supabase Studio SQL Editor **once** to create the `execute_sql` RPC function. Without it, all tools return an error.
+
+Since 0.2.0 the function enforces `read_only = true` (read-only transaction) and revokes EXECUTE from `PUBLIC`, `anon` and `authenticated` — re-run `MIGRATION.sql` after upgrading, or verify with `scripts/verify_setup.py`.
 
 ## Tools (47)
 
@@ -40,8 +42,8 @@ Run `MIGRATION.sql` in Supabase Studio SQL Editor **once** to create the `execut
 ### SQL & Query
 | Tool | Description |
 |------|-------------|
-| `supabase_execute_sql` | Arbitrary SQL (read_only default) |
-| `supabase_explain_query` | EXPLAIN ANALYZE |
+| `supabase_execute_sql` | Arbitrary SQL — `read_only=true` enforced unless explicitly `false` |
+| `supabase_explain_query` | Query plan JSON (`analyze=true` executes) |
 | `supabase_get_slow_queries` | Slow queries (pg_stat_statements) |
 
 ### Database Stats
@@ -53,7 +55,7 @@ Run `MIGRATION.sql` in Supabase Studio SQL Editor **once** to create the `execut
 | `supabase_get_table_sizes` | Per-table disk usage |
 | `supabase_get_cache_hit_ratio` | Buffer cache hit ratio |
 | `supabase_get_locks` | Lock waits and blockers |
-| `supabase_get_deadlocks` | Deadlock info |
+| `supabase_get_deadlocks` | Deadlock/rollback counters |
 | `supabase_get_autovacuum_status` | Vacuum status |
 | `supabase_get_connection_pool_stats` | Connection pool |
 
@@ -79,10 +81,10 @@ Run `MIGRATION.sql` in Supabase Studio SQL Editor **once** to create the `execut
 |------|-------------|
 | `supabase_list_rls_policies` | RLS policies |
 | `supabase_get_rls_status` | RLS enabled/disabled |
-| `supabase_get_advisors` | Security/performance notices |
+| `supabase_get_advisors` | Built-in linter subset (security/performance) |
 | `supabase_list_publications` | Realtime publications |
-| `supabase_list_realtime_channels` | Active channels |
-| `supabase_get_realtime_config` | WAL level |
+| `supabase_list_realtime_channels` | Tables enabled for Realtime |
+| `supabase_get_realtime_config` | WAL / replication settings |
 
 ### Extensions & Edge
 | Tool | Description |

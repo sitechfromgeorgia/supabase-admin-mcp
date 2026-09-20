@@ -30,15 +30,16 @@ This Python version solves both via REST API:
 The `execute_sql` function is the core of this MCP. It's a `SECURITY DEFINER` function — runs with the privileges of its owner (the user who created it, usually `postgres` or `supabase_admin`).
 
 ```sql
-CREATE OR REPLACE FUNCTION public.execute_sql(query text, read_only boolean DEFAULT false)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+CREATE OR REPLACE FUNCTION public.execute_sql(query text, read_only boolean DEFAULT true)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 ```
 
 **Security:**
-- Only `service_role` can call it (REVOKE from anon, authenticated)
+- Only `service_role` can call it — `MIGRATION.sql` revokes EXECUTE from `PUBLIC` (PostgreSQL's default grant!), `anon` and `authenticated`
 - `SECURITY DEFINER` means it runs as the function owner (bypasses RLS)
-- `SET search_path = public` prevents search-path attacks
-- The MCP's `read_only=true` defaults to safe
+- `SET search_path = public, pg_temp` prevents search-path attacks
+- `read_only = true` (the default) is enforced at the database level: the query runs inside a read-only transaction, so writes fail with SQLSTATE 25006. Writes require an explicit `read_only = false`
+- `EXPLAIN ... (FORMAT JSON)` is special-cased: it cannot be wrapped as a subquery, so it executes directly
 
 ### PostgreSQL Query Patterns
 
@@ -59,10 +60,10 @@ SELECT * FROM storage.buckets
 ## Tool Categories
 
 ### Schema & Tables (11 tools)
-Standard PostgreSQL introspection. Queries `information_schema`, `pg_catalog`.
+Standard PostgreSQL introspection. Queries `information_schema`, `pg_catalog` (join-based; no string comparison on `regclass` output).
 
 ### SQL & Query (3 tools)
-`execute_sql` is the powerhouse — any SQL. `explain_query` for performance. `get_slow_queries` needs `pg_stat_statements` extension.
+`execute_sql` is the powerhouse — any SQL. `explain_query` for performance (FORMAT JSON). `get_slow_queries` needs `pg_stat_statements`.
 
 ### Database Stats (9 tools)
 Production monitoring: connections, locks, vacuum status, cache hit ratio, table sizes.
@@ -74,29 +75,17 @@ Read `auth.users`, sessions, config. Uses `auth.` schema prefix in SQL. **No use
 Lists buckets/objects, reads config/metadata. Uses `/rest/v1/bucket`, `/rest/v1/object/` endpoints directly.
 
 ### RLS & Realtime (6 tools)
-Row-Level Security policies, publications, WAL configuration.
+Row-Level Security policies, publications, WAL configuration. `get_advisors` runs a built-in subset of Supabase's linter checks (security/performance).
 
 ### Extensions (4 tools)
 pg_cron, pgvector, available extensions.
 
 ### Edge Functions (2 tools)
-List deployed functions, get function details.
+List deployed functions, get function details. Gracefully reports when the `supabase_functions` schema is absent.
 
 ## Migration
 
-```sql
--- Run ONCE in Supabase Studio SQL Editor
-CREATE OR REPLACE FUNCTION public.execute_sql(query text, read_only boolean DEFAULT false)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE result jsonb; BEGIN
-  EXECUTE 'SELECT COALESCE(jsonb_agg(t), ''[]''::jsonb) FROM (' || query || ') t' INTO result;
-  RETURN result;
-EXCEPTION WHEN others THEN RAISE EXCEPTION 'Error executing SQL (SQLSTATE: %): %', SQLSTATE, SQLERRM;
-END; $$;
-REVOKE ALL ON FUNCTION public.execute_sql(text, boolean) FROM anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.execute_sql(text, boolean) TO service_role;
-NOTIFY pgrst, 'reload schema';
-```
+Run [`../MIGRATION.sql`](../MIGRATION.sql) — it creates the function, enforces `read_only`, locks EXECUTE down to `service_role` and reloads the PostgREST schema cache. Re-run it after every upgrade; it is idempotent.
 
 ## Environment Variables
 
