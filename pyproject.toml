@@ -1,6 +1,8 @@
 [project]
 name = "supabase-admin-mcp"
-version = "0.1.0"
-description = "MCP server for self-hosted Supabase — 50+ tools, REST API only, no DATABASE_URL"
+version = "0.2.0"
+description = "MCP server for self-hosted Supabase — 47 tools, REST API only, no DATABASE_URL"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = ["mcp>=1.0.0", "httpx>=0.28"]
