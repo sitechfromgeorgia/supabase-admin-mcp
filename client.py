@@ -5,11 +5,15 @@ All queries via execute_sql RPC + REST API. No DATABASE_URL needed.
 
 import httpx
 
+# Generous timeout: heavy admin queries (table sizes, EXPLAIN, stats) can take
+# longer than httpx's 5 s default.
+DEFAULT_TIMEOUT = 30.0
+
 
 class SupabaseAdminClient:
     """Supabase client with service_role. All via REST (no direct DB)."""
 
-    def __init__(self, url: str, service_key: str):
+    def __init__(self, url: str, service_key: str, timeout: float = DEFAULT_TIMEOUT):
         self.base = url.rstrip("/")
         self.rest = f"{self.base}/rest/v1"
         self.headers = {
@@ -17,7 +21,7 @@ class SupabaseAdminClient:
             "Authorization": f"Bearer {service_key}",
             "Content-Type": "application/json",
         }
-        self._http = httpx.AsyncClient(headers=self.headers)
+        self._http = httpx.AsyncClient(headers=self.headers, timeout=timeout)
 
     async def sql(self, query: str, read_only: bool = True) -> list[dict]:
         r = await self._http.post(f"{self.base}/rest/v1/rpc/execute_sql", json={"query": query, "read_only": read_only})
@@ -31,7 +35,7 @@ class SupabaseAdminClient:
         r.raise_for_status()
         return r.json()
 
-    async def storage_get(self, path: str, params: dict | None = None) -> list[dict]:
+    async def storage_get(self, path: str, params: dict | None = None):
         r = await self._http.get(f"{self.base}/storage/v1/{path.lstrip('/')}", params=params)
         r.raise_for_status()
         return r.json()
